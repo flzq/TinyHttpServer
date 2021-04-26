@@ -12,11 +12,13 @@
 #include <time.h>
 #include "wrap.h"
 #include "lst_timer.h"
+#include "http_conn.h"
+#include "threadpool.h"
 
-#define SERVER_PORT 9999
-#define OPEN_FILES 1024
+#define SERVER_PORT 9999 
+#define OPEN_FILES 10000 // 最大事件数
 #define BUFFER_SIZE 10 
-#define FD_LIMIT 65535
+#define FD_LIMIT 65536 // 最大文件描述符
 #define TIMESLOT 5
 
 static int pipefd[2];
@@ -26,33 +28,9 @@ static sort_timer_lst timer_lst;
 client_data* users = new client_data[FD_LIMIT];
 bool timeout = false;
 
-void setnonblocking(int fd) {
-    int flag = fcntl(fd, F_GETFL);
-    if (flag < 0) {
-        perr_exit("fcntl: get");
-    }
-    flag |= O_NONBLOCK;
-    int ret = fcntl(fd, F_SETFL, flag);
-    if (ret < 0) {
-        perr_exit("fcntl: set");
-    }
-}
 
-void addfd(int epollfd, int fd, bool enable_et) {
-    struct epoll_event tmp_ep;
-    char buf[BUFSIZ];
-    tmp_ep.events = EPOLLIN;
-    tmp_ep.data.fd = fd;
-    if (enable_et) {
-        tmp_ep.events |= EPOLLET;
-    }
-    int ret = epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &tmp_ep); 
-    if (ret < 0) {
-        sprintf(buf, "%d: epoll_ctl error", __LINE__);
-        perr_exit(buf);
-    }
-    setnonblocking(fd);
-}
+extern void setnonblocking(int fd); 
+extern void addfd(int epollfd, int fd, bool one_shot); 
 
 void sig_handler(int sig_num) {
     // 保留原来的errno，保证函数的可重入性
@@ -86,47 +64,8 @@ void add_sig(int sig_num) {
 void cb_func(client_data *user_data) {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     Close(user_data->sockfd);
+    Http_conn::m_user_count--;
     printf("close fd: %d\n", user_data->sockfd);
-}
-
-void lt(epoll_event *events, int num, int epollfd, int listenfd) {
-    int clientfd;
-    char buf[BUFFER_SIZE];
-    for (int i = 0; i < num; ++i) {
-        if (!(events[i].events & EPOLLIN)) {
-            continue;
-        }
-        if (events[i].data.fd == listenfd) {
-            struct sockaddr_in client_addr;
-            socklen_t client_addr_len = sizeof(client_addr);
-            clientfd = Accept(listenfd, (struct sockaddr*)&client_addr, &client_addr_len); 
-            printf("accept: %d", clientfd);
-            addfd(epollfd, clientfd, false);
-        }
-        else {
-            printf("event trigger once\n");
-            memset(buf, '\0', BUFFER_SIZE);
-            clientfd = events[i].data.fd;
-            int ret = read(clientfd, buf, BUFFER_SIZE);
-            if (ret < 0) {
-                printf("close %d\n", clientfd);
-                Close(clientfd);
-                continue;
-            }
-            else if (ret == 0) {
-                ret = epoll_ctl(epollfd, EPOLL_CTL_DEL, clientfd, NULL);
-                if (ret == -1)
-                {
-                    sprintf(buf, "%d: epoll_ctl error", __LINE__);
-                    perr_exit(buf);
-                }
-                Close(clientfd);
-            }
-            else {
-                printf("get %d bytes of content: %s\n", ret, buf); 
-            }
-        }
-    }
 }
 
 void et(struct epoll_event *events, int num, int epollfd, int listenfd) {
@@ -254,6 +193,20 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // 线程池
+   Threadpool<Http_conn> *pool = NULL;
+   pool = new Threadpool<Http_conn>;
+   if (pool == nullptr) {
+       fprintf(stderr, "[%d: %s] create threading pool failed\n", __LINE__, __FILE__);
+       return 1;
+   }
+
+    // 存储客户链接数据
+   Http_conn* users = new Http_conn[FD_LIMIT];
+   if (users == nullptr) {
+       fprintf(stderr, "[%d: %s] create users buffer failed", __LINE__, __FILE__);
+   }
+
     int listenfd, clientfd, epollfd, ret;
     struct epoll_event tmp_ep, events[OPEN_FILES];
     struct sockaddr_in server_addr;
@@ -272,7 +225,8 @@ int main(int argc, char *argv[]) {
     if (epollfd < 0) {
         perr_exit("epoll_create");
     }
-    addfd(epollfd, listenfd, true);
+    addfd(epollfd, listenfd, false);
+    Http_conn::m_epollfd = epollfd;
 
     // 统一事件源：处理信号的事件
     ret = socketpair(AF_UNIX, SOCK_STREAM, 0, pipefd);
@@ -290,6 +244,8 @@ int main(int argc, char *argv[]) {
     add_sig(SIGINT);
     add_sig(SIGALRM);
 
+    // 存储每个用户与定时器有关的数据
+    client_data *users_timer = new client_data[FD_LIMIT];
     alarm(TIMESLOT);
     while (!stop_server) {
         ret = epoll_wait(epollfd, events, OPEN_FILES, -1);
@@ -297,20 +253,115 @@ int main(int argc, char *argv[]) {
             perr_exit("epoll wait error");
         }
         // lt(events, ret, epollfd, listenfd);
-        et(events, ret, epollfd, listenfd);
+        // et(events, ret, epollfd, listenfd);
+        for (int i = 0; i < ret; ++i)
+        {
+            int clientfd = events[i].data.fd;
+            if (clientfd == listenfd) {// 处理新的客户链接
+                struct sockaddr_in client_addr;
+                socklen_t client_addr_len = sizeof(client_addr);
+                clientfd = Accept(listenfd, (struct sockaddr *)&client_addr, &client_addr_len);
 
+                if (Http_conn::m_user_count >= FD_LIMIT) {
+                    //
+                    fprintf(stderr, "Internal server busy");
+                    continue;
+                }
+
+                users[clientfd].init(clientfd, client_addr);
+                
+                /* 
+                创建定时器，设置回调函数与超时时间，然后绑定定时器与用户数据，
+                最后将定时器添加到链表中
+               */
+                users_timer[clientfd].address = client_addr;
+                users_timer[clientfd].sockfd = clientfd;
+                util_timer *timer = new util_timer;
+                timer->user_data = &users_timer[clientfd];
+                timer->cb_func = cb_func;
+                time_t cur = time(nullptr);
+                timer->expire = cur + 3 * TIMESLOT;
+                users_timer[clientfd].timer = timer;
+                timer_lst.add_timer(timer);
+            }
+            else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) { // 服务器关闭连接，移除对应的定时器
+                util_timer *timer = users_timer[clientfd].timer;
+                timer->cb_func(&users_timer[clientfd]);
+                if (timer) {
+                    timer_lst.del_timer(timer);
+                }
+            }
+            else if (clientfd == pipefd[0] && (events[i].events & EPOLLIN)) { // 处理信号
+                char signals[1024];
+                int ret = read(pipefd[0], signals, sizeof(signals));
+                if (ret == -1)
+                {
+                    continue;
+                }
+                else if (ret == 0)
+                {
+                    continue;
+                }
+                else
+                {
+                    for (int j = 0; j < ret; ++j)
+                    {
+                        switch (signals[i])
+                        {
+                        case SIGCHLD:
+                        case SIGHUP:
+                            continue;
+                        case SIGALRM:
+                            timeout = true;
+                            break;
+                        case SIGTERM:
+                        case SIGINT:
+                            stop_server = true;
+                        }
+                    }
+                }
+            }
+            else if (events[i].events & EPOLLIN) { // 处理客户连接上接收到的数据
+                util_timer *timer = users_timer[clientfd].timer;
+                if (users[clientfd].read()) {
+                    // 检测到读事件，将事件放入请求队列
+                    pool->append(users+clientfd);
+                    /* 
+                        从客户端中可以读取数据，调整相应连接的定时器，从而延迟该连接
+                        被关闭的时间
+                    */
+                    if (timer) {
+                        time_t cur = time(nullptr);
+                        timer->expire = cur + 3 * TIMESLOT;
+                        printf("adjust timer once\n");
+                        timer_lst.adjust_timer(timer);
+                    }
+                }
+                else { // 对方关闭连接或者读取数据时出错，关闭连接
+                    timer->cb_func(&users_timer[clientfd]);
+                    if (timer) {
+                        timer_lst.del_timer(timer);
+                    }
+                }
+            }
+            else if (events[i].events & EPOLLOUT) { // EPOLLOUT：数据可写
+            }
+        }
         // 处理定时任务
-        if (timeout) {
+        if (timeout)
+        {
             timer_handler();
             timeout = false;
         }
-
     }
 
+    Close(epollfd);
     Close(listenfd);
     Close(pipefd[0]);
     Close(pipefd[1]);
     delete [] users;
+    delete[] users_timer;
+    delete pool;
 
     return 0;
 }

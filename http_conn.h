@@ -1,67 +1,87 @@
-#ifndef HTTPCONNECTION_H
-#define HTTPCONNECTION_H
+#ifndef HTTP_CONN_H
+#define HTTP_CONN_H
 
+#include <netinet/in.h>
 #include <unistd.h>
-#include <signal.h>
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <assert.h>
-#include <sys/stat.h>
-#include <string.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mman.h>
-#include <stdarg.h>
+#include <cstring>
 #include <errno.h>
-#include "locker.h"
+#include "wrap.h"
 
-class http_conn
-{
+class Http_conn {
 public:
     static const int FILENAME_LEN = 200;
+    // 读缓冲区大小
     static const int READ_BUFFER_SIZE = 2048;
+    // 写缓冲区大小
     static const int WRITE_BUFFER_SIZE = 1024;
-    enum METHOD { GET = 0, POST, HEAD, PUT, DELETE, TRACE, OPTIONS, CONNECT, PATCH };
-    enum CHECK_STATE { CHECK_STATE_REQUESTLINE = 0, CHECK_STATE_HEADER, CHECK_STATE_CONTENT };
-    enum HTTP_CODE { NO_REQUEST, GET_REQUEST, BAD_REQUEST, NO_RESOURCE, FORBIDDEN_REQUEST, FILE_REQUEST, INTERNAL_ERROR, CLOSED_CONNECTION };
-    enum LINE_STATUS { LINE_OK = 0, LINE_BAD, LINE_OPEN };
+    // 支持的请求方法
+    enum METHOD { 
+        GET = 0, 
+        POST, 
+        HEAD, PUT, DELETE, TRACE, OPTIONS, CONNECT, PATCH 
+    };
+    // 主状态机状态
+    enum CHECK_STATE { 
+        CHECK_STATE_REQUESTLINE = 0, // 解析请求行
+        CHECK_STATE_HEADER, // 解析请求头 
+        CHECK_STATE_CONTENT // 解析消息体，仅用于 POST 请求 
+    };
+    // Http 请求状态：服务器处理HTTP请求的结果
+    enum HTTP_CODE { 
+        NO_REQUEST, // 请求不完整，继续读取客户请求
+        GET_REQUEST, // 获得了一个完整的客户HTTP请求
+        BAD_REQUEST, // 客户请求有语法错误 
+        NO_RESOURCE, // 
+        FORBIDDEN_REQUEST, 
+        FILE_REQUEST, 
+        INTERNAL_ERROR, // 服务器内部错误
+        CLOSED_CONNECTION 
+    };
+    // 从状态机状态
+    enum LINE_STATUS { 
+        LINE_OK = 0, // 完整读取一行 
+        LINE_BAD, // 报文语法有错误 
+        LINE_OPEN // 读取的行不完整
+    };
 
 public:
-    http_conn(){}
-    ~http_conn(){}
+    Http_conn () {}
+    ~Http_conn() {}
 
 public:
-    void init( int sockfd, const sockaddr_in& addr );
-    void close_conn( bool real_close = true );
-    void process();
+    void init(int sockfd, const sockaddr_in &addr);
+    void close_conn(bool real = true); 
+    // 往读缓冲区读入数据
     bool read();
-    bool write();
+    /* 处理读入的数据，子线程通过调用process函数对任务进行处理，
+       process 函数调用process_read函数和process_write函数分别完成报文解析与报文响应两个任务。
+    */
+    void process();
 
 private:
     void init();
+    // 完成报文解析
     HTTP_CODE process_read();
-    bool process_write( HTTP_CODE ret );
-
-    HTTP_CODE parse_request_line( char* text );
-    HTTP_CODE parse_headers( char* text );
-    HTTP_CODE parse_content( char* text );
-    HTTP_CODE do_request();
-    char* get_line() { return m_read_buf + m_start_line; }
+    // 完成报文响应
+    bool process_write(HTTP_CODE ret);
+    // 从状态机，负责读取报文的一行，返回值为读取状态
     LINE_STATUS parse_line();
-
-    void unmap();
-    bool add_response( const char* format, ... );
-    bool add_content( const char* content );
-    bool add_status_line( int status, const char* title );
-    bool add_headers( int content_length );
-    bool add_content_length( int content_length );
-    bool add_linger();
-    bool add_blank_line();
+    // 获取请求的一行
+    char *get_line() {
+        return m_read_buf + m_start_line;
+    }
+    /*
+        主状态机部分
+    */
+    // 解析HTTP请求行，获得请求方法，目标url，http版本号，返回HTTP请求的状态
+    HTTP_CODE parse_request_line(char *text);
 
 public:
     static int m_epollfd;
@@ -71,27 +91,29 @@ private:
     int m_sockfd;
     sockaddr_in m_address;
 
-    char m_read_buf[ READ_BUFFER_SIZE ];
+    char m_read_buf[READ_BUFFER_SIZE];
+    // 读缓冲区中的数据大小
     int m_read_idx;
+    // 指向读缓冲区中，将要解析的字符
     int m_checked_idx;
+    // 读缓存区中，一行的起始位置
     int m_start_line;
-    char m_write_buf[ WRITE_BUFFER_SIZE ];
+    char m_write_buf[WRITE_BUFFER_SIZE];
     int m_write_idx;
 
     CHECK_STATE m_check_state;
-    METHOD m_method;
 
-    char m_real_file[ FILENAME_LEN ];
-    char* m_url;
-    char* m_version;
-    char* m_host;
-    int m_content_length;
+    // 请求行中的数据
+    METHOD m_method; // 请求方法
+    char *m_url; // 请求资源
+    char *m_version; // HTTP 版本
+    int cgi; // 是否启用 POST
+
+    // Http 请求是否要保持连接
     bool m_linger;
 
-    char* m_file_address;
-    struct stat m_file_stat;
-    struct iovec m_iv[2];
-    int m_iv_count;
+
 };
+
 
 #endif
