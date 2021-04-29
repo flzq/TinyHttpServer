@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/epoll.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -12,10 +14,12 @@
 #include <stdlib.h>
 #include <cstring>
 #include <errno.h>
+#include <cstdarg>
 #include "wrap.h"
 
 class Http_conn {
 public:
+    // 客户端请求的文件名称长度的最大值
     static const int FILENAME_LEN = 200;
     // 读缓冲区大小
     static const int READ_BUFFER_SIZE = 2048;
@@ -82,6 +86,22 @@ private:
     */
     // 解析HTTP请求行，获得请求方法，目标url，http版本号，返回HTTP请求的状态
     HTTP_CODE parse_request_line(char *text);
+    // 解析HTTP请求头和空行
+    HTTP_CODE parse_request_headers(char *text);
+    // 解析HTTP消息体
+    HTTP_CODE parse_content(char *text);
+    // 位于process_read函数中，读到完整的HTTP请求后，对请求的资源进行分析
+    HTTP_CODE do_request();
+
+    // HTTP响应时使用的一些函数
+    bool add_response(const char *format, ...);
+    bool add_content(const char *content);
+    bool add_status_line(int status, const char *title); // 添加状态行
+    bool add_headers(int content_length); // 添加消息报头，内部调用 add_content_length 和 add_linger
+    bool add_content_type();
+    bool add_content_length(int content_length);
+    bool add_linger();
+    bool add_blank_line(); // 添加空行
 
 public:
     static int m_epollfd;
@@ -91,6 +111,7 @@ private:
     int m_sockfd;
     sockaddr_in m_address;
 
+    // 读缓冲区
     char m_read_buf[READ_BUFFER_SIZE];
     // 读缓冲区中的数据大小
     int m_read_idx;
@@ -98,7 +119,9 @@ private:
     int m_checked_idx;
     // 读缓存区中，一行的起始位置
     int m_start_line;
+    // 写缓冲区
     char m_write_buf[WRITE_BUFFER_SIZE];
+    // 写缓存去中指针
     int m_write_idx;
 
     CHECK_STATE m_check_state;
@@ -109,10 +132,20 @@ private:
     char *m_version; // HTTP 版本
     int cgi; // 是否启用 POST
 
-    // Http 请求是否要保持连接
-    bool m_linger;
+    // 请求头中的数据
+    int m_content_length; // 内容长度字段
+    bool m_linger; // Http 请求是否要保持连接
+    char *m_string; // 存储请求头数据
 
+    // 解析客户端请求数据
+    char m_real_file[FILENAME_LEN];
+    struct stat m_file_stat; // 请求文件信息
+    char *m_file_address; // 映射的文件在内存中地址
 
+    // 向客户端写入数据时的信息
+    iovec m_iv[2];
+    int m_iv_count;
+    int bytes_to_send;
 };
 
 
