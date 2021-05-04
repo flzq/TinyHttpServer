@@ -510,16 +510,37 @@ bool Http_conn::add_response(const char *format, ...) {
 
     return true;
 }
-bool add_content(const char *content);
-bool add_status_line(int status, const char *title); // 添加状态行
-bool add_headers(int content_length);                // 添加消息报头，内部调用 add_content_length 和 add_linger
-bool add_content_type();
-bool add_content_length(int content_length);
-bool add_linger();
-bool add_blank_line(); // 添加空行
-bool Http_conn::add_status_line(int status, const char *title) {
+//添加文本content
+bool Http_conn::add_content(const char *content){
+    return add_response("%s", content);
+}
+// 添加状态行
+bool Http_conn::add_status_line(int status, const char *title) { // 添加状态行
     return add_response("%s %d %s\r\n", "HTTP/1.1", status, title);
 }
+// 添加消息报头：文本长度、连接状态、空行
+bool Http_conn::add_headers(int content_length) {                // 添加消息报头，内部调用 add_content_length 和 add_linger
+    add_content_length(content_length);
+    add_linger();
+    add_blank_line();
+}
+//添加文本类型，这里是html
+bool Http_conn::add_content_type() {
+    return add_response("Content-Type:%s\r\n", "text/html");
+}
+//添加Content-Length，表示响应报文的长度
+bool Http_conn::add_content_length(int content_length) {
+    return add_response("Content-Length:%s\r\n", content_length);
+}
+//添加连接状态，通知浏览器端是保持连接还是关闭
+bool Http_conn::add_linger() {
+    return add_response("Connection:%s\r\n", (m_linger == true) ? "keep-alive" : "close");
+}
+//添加空行
+bool Http_conn::add_blank_line() {// 添加空行
+    return add_response("%s", "\r\n");
+}
+
 
 
 
