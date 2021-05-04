@@ -486,8 +486,29 @@ bool Http_conn::process_write(Http_conn::HTTP_CODE ret) {
 }
 
 // HTTP响应时使用的一些函数
-bool add_response(const char *format, ...) {
+bool Http_conn::add_response(const char *format, ...) {
+    // 写入内容超出m_write_buf则报错
+    if (m_write_idx >= WRITE_BUFFER_SIZE) {
+        return false;
+    }
+    // 定义可变参数列表
+    va_list arg_list;
+    va_start(arg_list, format);
 
+    // 将数据按照format格式从可变参数列表中写入缓冲区中
+    int len = vsnprintf(m_write_buf+m_write_idx, WRITE_BUFFER_SIZE-m_write_idx, format, arg_list);
+    // 写入长度超过缓冲区剩余空间，则报错
+    if (len >= WRITE_BUFFER_SIZE-m_write_idx) {
+        va_end(arg_list);
+        return false;
+    }
+
+    // 更新m_write_idx位置
+    m_write_idx += len;
+    // 清空可变参数列表
+    va_end(arg_list);
+
+    return true;
 }
 bool add_content(const char *content);
 bool add_status_line(int status, const char *title); // 添加状态行
