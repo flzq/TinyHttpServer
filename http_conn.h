@@ -15,7 +15,9 @@
 #include <cstring>
 #include <errno.h>
 #include <cstdarg>
+#include <sys/uio.h>
 #include "wrap.h"
+#include "sql_connection_pool.h"
 
 class Http_conn {
 public:
@@ -68,6 +70,13 @@ public:
        process 函数调用process_read函数和process_write函数分别完成报文解析与报文响应两个任务。
     */
     void process();
+    // 将响应报文写入客户端
+    bool write();
+    // 将数据库中的用户名和密码载入到服务器中
+    void init_mysql_result(Connection_pool *conn_pool);
+    sockaddr_in *get_address() {
+        return &m_address;
+    }
 
 private:
     void init();
@@ -102,10 +111,12 @@ private:
     bool add_content_length(int content_length);
     bool add_linger();
     bool add_blank_line(); // 添加空行
+    void unmap();
 
 public:
     static int m_epollfd;
     static int m_user_count;
+    MYSQL *mysql;
 
 private:
     int m_sockfd;
@@ -121,7 +132,7 @@ private:
     int m_start_line;
     // 写缓冲区
     char m_write_buf[WRITE_BUFFER_SIZE];
-    // 写缓存去中指针
+    // 写缓冲区中指针
     int m_write_idx;
 
     CHECK_STATE m_check_state;
@@ -130,6 +141,7 @@ private:
     METHOD m_method; // 请求方法
     char *m_url; // 请求资源
     char *m_version; // HTTP 版本
+    char *m_host;
     int cgi; // 是否启用 POST
 
     // 请求头中的数据
@@ -146,6 +158,7 @@ private:
     iovec m_iv[2];
     int m_iv_count;
     int bytes_to_send;
+    int bytes_have_send;
 };
 
 

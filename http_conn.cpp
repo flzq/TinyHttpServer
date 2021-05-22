@@ -1,5 +1,6 @@
+#include <map>
 #include "http_conn.h"
-
+#include "log.h"
 
 // 网站根目录
 const char *web_root = "/home/";
@@ -14,6 +15,36 @@ const char *error_404_title = "Not Found";
 const char *error_404_form = "The requested file was not found on this server.\n";
 const char *error_500_title = "Internal Error";
 const char *error_500_form = "There was an unusual problem serving the request file.\n";
+
+// 使用 map 将数据库中的用户名和密码载入到服务器中
+Locker users_mutex; // 向数据库插入数据时，用于同步
+std::map<std::string, std::string> users; // 将表中的用户名和密码放入 map 中
+void Http_conn::init_mysql_result(Connection_pool *conn_pool) {
+    // 从数据库连接池中获取一个连接
+    MYSQL *mysql = nullptr;
+    ConnectionRAII mysql_conn(&mysql, conn_pool);
+
+    // 在 user 表中检索 username，passwd数据
+    if (mysql_query(mysql, "select username, passwd from user")) {
+        LOG_ERROR("select error:%s\n", mysql_error(mysql));
+    }
+
+    // 从表中获取完整的结果集
+    MYSQL_RES *result = mysql_store_result(mysql);
+
+    // 返回结果集中的列数
+    int num_fields = mysql_num_fields(result);
+
+    // 返回所有字段结构的数组
+    MYSQL_FIELD *fields = mysql_fetch_fields(result);
+
+    // 从结果集中获取下一行，将对应的用户名和密码存入map中
+    while (MYSQL_ROW row = mysql_fetch_row(result)) {
+        std::string temp1(row[0]);
+        std::string temp2(row[1]);
+        users[temp1] = temp2;
+    }
+}
 
 // 文件描述符设置非阻塞
 void setnonblocking(int fd) {
@@ -81,6 +112,8 @@ void Http_conn::init(int sockfd, const sockaddr_in &addr) {
 
 // 初始化新连接
 void Http_conn::init() {
+    // 数据库初始化
+    mysql = nullptr;
     // check_state 从分析请求行状态开始
     m_check_state = CHECK_STATE_REQUESTLINE;
     
@@ -90,6 +123,7 @@ void Http_conn::init() {
     m_url = nullptr;
     m_version = nullptr;   
     m_linger = false;
+    m_host = 0;
 
     // 请求头中数据初始化
     m_content_length = 0;
@@ -101,17 +135,22 @@ void Http_conn::init() {
     memset(m_read_buf, '\0', READ_BUFFER_SIZE);
     memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
 
+    // 写缓冲区相关数据初始化
+    m_write_idx = 0;
+
     // 客户端请求资源相关数据初始化
     memset(m_real_file, '\0', FILENAME_LEN);
 
     // 向客户端写入数据初始化
     bytes_to_send = 0;
+    bytes_have_send = 0;
     m_iv_count = 0;
 }
 
-// 服务器端关闭连接
+// 服务器端关闭一个连接
 void Http_conn::close_conn(bool real_close) {
     if (real_close && (m_sockfd != -1)) {
+        removefd(m_epollfd, m_sockfd);
         m_sockfd = -1;
         m_user_count--;
     }
@@ -155,6 +194,7 @@ void Http_conn::process() {
         modfd(m_epollfd, m_sockfd, EPOLLIN);
         return;
     }
+    // 调用 process_write 完成报文响应
     bool write_ret = process_write(read_ret);
     if (!write_ret) {
         close_conn();
@@ -175,7 +215,8 @@ Http_conn::HTTP_CODE Http_conn::process_read() {
             || ((line_status = parse_line()) == LINE_OK)) {
         text = get_line(); // 获取一行的起始地址
         m_start_line = m_checked_idx; // 新的一行的下标
-
+        LOG_INFO("%s", text);
+        Log::get_instance()->flush();
         // 主状态机的三种状态转移逻辑
         switch (m_check_state) {
             case CHECK_STATE_REQUESTLINE: { // 解析请求行
@@ -212,6 +253,8 @@ Http_conn::HTTP_CODE Http_conn::process_read() {
     return NO_REQUEST;
 }
 
+//从状态机，用于分析出一行内容
+//返回值为行的读取状态，有LINE_OK,LINE_BAD,LINE_OPEN
 Http_conn::LINE_STATUS Http_conn::parse_line() {
     /*
         HTTP报文中，每一行的数据由\r\n作为结束字符
@@ -222,7 +265,7 @@ Http_conn::LINE_STATUS Http_conn::parse_line() {
         if (m_read_buf[m_checked_idx] == '\r') {
             // 如果已经到达了读缓冲区的结尾，则要继续接收客户端数据
             if (m_checked_idx + 1 == m_read_idx) {
-                break;
+                return LINE_OPEN;
             }
             else if (m_read_buf[m_checked_idx+1] == '\n') { // 下一个字符是 \n，将 \r\n 改为 \0\0
                 m_read_buf[m_checked_idx++] = '\0';
@@ -337,12 +380,24 @@ Http_conn::HTTP_CODE Http_conn::parse_request_headers(char *text) {
         text += strspn(text, " \t");
         m_content_length = atoi(text);
     }
+    else if (strncasecmp(text, "Host:", 5) == 0) {
+        text += 5;
+        text += strspn(text, " \t");
+        m_host = text;
+    }
+    else {
+        LOG_INFO("oop! Unknow header: %s", text);
+        Log::get_instance()->flush();
+    }
+    return NO_REQUEST;
 }
 
 Http_conn::HTTP_CODE Http_conn::parse_content(char *text) {
    // 判断读缓冲区中是否读取了完整的消息体
    if (m_read_idx >= (m_content_length+m_checked_idx)) {
        text[m_content_length] = '\0';
+
+       // POST 请求，提取输入的用户名和密码
        m_string = text;
 
        return GET_REQUEST;
@@ -361,8 +416,65 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
     // 处理cgi，实现登录和注册校验
     if (cgi == 1 && (*(p+1) == '2' || *(p+1) == '3')) {
         // 根据标志判断是登录检测还是注册检测
+        char flag = m_url[1];
+
+        char *m_url_real = (char*)malloc(sizeof(char)*200);
+        strcpy(m_url_real, "/");
+        strcat(m_url_real, m_url+2);
+        strncpy(m_real_file + len, m_url_real, FILENAME_LEN - len - 1);
+        free(m_url_real);
+
+        // 将用户名和密码提取出来：user=123&passwd=123
+        char name[100], password[100];
+        int i;
+        for (i = 5; m_string[i] != '&'; ++i) { // &为分隔符，前面为用户名
+            name[i-5] = m_string[i];
+        }
+        name[i-5] = '\0';
+
+        int j = 0; 
+        for (i = i + 10; m_string[i] != '\0'; ++i, ++j) { // &为分隔符，后面为密码
+            password[j] = m_string[i];
+        }
+        password[j] = '\0';
 
         // 同步线程登录校验
+        // 通过m_url定位/所在位置，根据/后的第一个字符判断是登录还是注册校验，2：登录校验，3：注册校验
+        if (*(p+1) == '3') { // 注册校验
+            // 先检查数据库中是否有重名，没有重名，就增加数据
+            char *sql_insert = (char *)malloc(sizeof(char)*200);
+            strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
+            strcat(sql_insert, "'");
+            strcat(sql_insert, name);
+            strcat(sql_insert, "', '");
+            strcat(sql_insert, password);
+            strcat(sql_insert, "')");
+            if (users.find(name) == users.end()) {
+                users_mutex.lock();
+                int res = mysql_query(mysql, sql_insert);
+                users.insert(std::pair<std::string, std::string>(name, password));
+                users_mutex.unlock();
+
+                if (!res) {
+                    strcpy(m_url, "/log.html");
+                }
+                else {
+                    strcpy(m_url, "registerError.html");
+                }
+            }
+            else {
+                strcpy(m_url, "/registerError.html");
+            }
+        }
+        else if (*(p+1) == '2'){ // 登录校验，直接判断
+            // 若浏览器输入的用户名和密码在表中可以查找到，返回1，否则返回0
+            if (users.find(name) != users.end() && users[name] == password) {
+                strcpy(m_url, "/welocme.html");
+            }
+            else {
+                strcpy(m_url, "/logError.html");
+            }
+        }
     }
 
     // 如果请求资源为 /0，表示跳转注册界面，POST请求
@@ -482,6 +594,7 @@ bool Http_conn::process_write(Http_conn::HTTP_CODE ret) {
     m_iv[0].iov_base = m_write_buf;
     m_iv[0].iov_len = m_write_idx;
     m_iv_count = 1;
+    bytes_to_send = m_write_idx;
     return true;
 }
 
@@ -507,7 +620,8 @@ bool Http_conn::add_response(const char *format, ...) {
     m_write_idx += len;
     // 清空可变参数列表
     va_end(arg_list);
-
+    LOG_INFO("request:%s", m_write_buf);
+    Log::get_instance()->flush();
     return true;
 }
 //添加文本content
@@ -530,7 +644,7 @@ bool Http_conn::add_content_type() {
 }
 //添加Content-Length，表示响应报文的长度
 bool Http_conn::add_content_length(int content_length) {
-    return add_response("Content-Length:%s\r\n", content_length);
+    return add_response("Content-Length:%d\r\n", content_length);
 }
 //添加连接状态，通知浏览器端是保持连接还是关闭
 bool Http_conn::add_linger() {
@@ -541,8 +655,63 @@ bool Http_conn::add_blank_line() {// 添加空行
     return add_response("%s", "\r\n");
 }
 
+// 将响应报文写入客户端
+bool Http_conn::write() {
+    // 发送的数据为0，表示若响应报文为空，一般不会出现这种情况
+    if (bytes_to_send == 0) {
+        modfd(m_epollfd, m_sockfd, EPOLLIN);
+        init();
+        return true;
+    }
+
+    int temp = 0;
+    while (1) {
+        temp = writev(m_sockfd, m_iv, m_iv_count);
+
+        if (temp < 0) {
+            if (errno == EAGAIN) { // 写缓冲区满了
+                modfd(m_epollfd, m_sockfd, EPOLLOUT);
+                return true;
+            }
+            unmap();
+            return false;
+        }
+
+        bytes_to_send -= temp;
+        bytes_have_send += temp;
+
+        if (bytes_have_send >= m_iv[0].iov_len) {
+            m_iv[0].iov_len = 0;
+            m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
+            m_iv[1].iov_len = bytes_to_send;
+        }
+        else {
+            m_iv[0].iov_base = m_write_buf + bytes_have_send;
+            m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;
+        }
+
+        if (bytes_to_send <= 0) {
+            unmap();
+            modfd(m_epollfd, m_sockfd, EPOLLIN);
+            
+            if (m_linger) {
+                init();
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+    }
+}
 
 
+void Http_conn::unmap() {
+    if (m_file_address) {
+        munmap(m_file_address, m_file_stat.st_size);
+        m_file_address = 0;
+    }
+}
 
 
 
