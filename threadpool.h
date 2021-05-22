@@ -2,15 +2,17 @@
 #define THREADPOOL_H
 #include <list>
 #include "lock.h"
+#include "sql_connection_pool.h"
 
 template <typename T>
 class Threadpool {
 public:
     /*
+        conn_pool：数据库连接池指针
         thread_num：线程池中线程数量
         max_requests：请求队列中最多运行的、等待处理的请求的数量
     */
-    Threadpool(int thread_num = 8, int max_requests = 10000);
+    Threadpool(Connection_pool *conn_pool, int thread_num = 8, int max_requests = 10000);
     ~Threadpool();
     // 往请求队列中添加任务
     bool append(T *request);
@@ -27,11 +29,14 @@ private:
     Locker m_queuelocker; // 保护请求队列的互斥锁
     Sem m_queuestat; // 是否有任务需要处理
     bool m_stop; // 是否结束线程
+    Connection_pool *m_conn_pool; // 数据库连接池指针
 };
 
 template <typename T>
-Threadpool<T>::Threadpool(int thread_num, int max_requests) : 
-    m_thread_num(thread_num), m_max_requests(max_requests), 
+Threadpool<T>::Threadpool(Connection_pool *conn_pool, int thread_num, int max_requests) : 
+    m_conn_pool(conn_pool),
+    m_thread_num(thread_num), 
+    m_max_requests(max_requests), 
     m_stop(false), m_threads(nullptr) {
 
     if ( (m_thread_num <= 0) || (m_max_requests <= 0)) {
@@ -101,6 +106,7 @@ void Threadpool<T>::run() {
         if (!request) {
             continue;
         }
+        ConnectionRAII mysql_conn(&request->mysql, m_conn_pool);
         request->process();
     }
 }
