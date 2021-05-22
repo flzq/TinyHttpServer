@@ -1,4 +1,5 @@
-#include <iostream>
+#include <cstdio>
+#include <cstdlib>
 #include "sql_connection_pool.h"
 
 // 初始化连接池
@@ -18,12 +19,12 @@ void Connection_pool::init(std::string url, std::string user, std::string passwo
         conn = mysql_init(conn);
 
         if (conn == nullptr) {
-            std::cout << "Error:" << mysql_error(conn);
+            fprintf(stderr, "Error: %s in [%s-%d-%s]\n", mysql_error(conn), __FILE__, __LINE__, __FUNCTION__);
             exit(1);
         } 
         conn = mysql_real_connect(conn, url.c_str(), user.c_str(), password.c_str(), database_name.c_str(), port, NULL, 0);
         if (conn == nullptr) {
-            std::cout << "Error:" << mysql_error(conn);
+            fprintf(stderr, "Error: %s in [%s-%d-%s]\n", mysql_error(conn), __FILE__, __LINE__, __FUNCTION__);
             exit(1);
         }
         // 数据库连接加入连接池
