@@ -264,7 +264,6 @@ int main(int argc, char *argv[]) {
                     if (timer) {
                         time_t cur = time(nullptr);
                         timer->expire = cur + 3 * TIMESLOT;
-                        printf("adjust timer once\n");
                         LOG_INFO("%s", "adjust timer once");
                         Log::get_instance()->flush();
                         timer_lst.adjust_timer(timer);
