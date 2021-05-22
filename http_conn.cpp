@@ -3,7 +3,7 @@
 #include "log.h"
 
 // 网站根目录
-const char *web_root = "/home/";
+const char *web_root = "/home/freetime/code/c/network/web_root/";
 
 // 定义HTTP响应的一些状态
 const char *ok_200_title = "OK";
