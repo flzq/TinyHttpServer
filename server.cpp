@@ -105,7 +105,7 @@ int main(int argc, char *argv[]) {
 
     // 创建数据库连接池
     Connection_pool *conn_pool = Connection_pool::get_instance();
-    conn_pool->init("localhost", "root", "root", "learn", 3306, 8);
+    conn_pool->init("localhost", "root", "c51e1cdf9f068345", "learn", 3306, 8);
 
     // 线程池
    Threadpool<Http_conn> *pool = NULL;
