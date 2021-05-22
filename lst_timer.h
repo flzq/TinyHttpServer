@@ -1,7 +1,10 @@
 #ifndef LST_TIMER_H
 #define LST_TIMER_H
 #include <time.h>
+#include <cstdio>
 #include <arpa/inet.h>
+
+#include "log.h"
 
 #define BUFFER_SIZE 64
 class util_timer;
@@ -129,7 +132,9 @@ public:
         if (head == nullptr) {
             return;
         }
-        printf("timer tick\n");
+        // printf("timer tick\n");
+        LOG_INFO("%s", "timer tick");
+        Log::get_instance()->flush();
         // 获取当前时间
         time_t cur = time(nullptr);
         util_timer *tmp = head;

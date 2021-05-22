@@ -18,7 +18,6 @@
 
 #define SERVER_PORT 9999 
 #define OPEN_FILES 10000 // 最大事件数
-#define BUFFER_SIZE 10 
 #define FD_LIMIT 65536 // 最大文件描述符
 #define TIMESLOT 5
 
@@ -78,7 +77,9 @@ void cb_func(client_data *user_data) {
     Close(user_data->sockfd);
     // 减少连接数
     Http_conn::m_user_count--;
-    printf("close fd: %d\n", user_data->sockfd);
+    // printf("close fd: %d\n", user_data->sockfd);
+    LOG_INFO("close fd: %d", user_data->sockfd);
+    Log::get_instance()->flush();
 }
 
 // 向客户端发送错误信息

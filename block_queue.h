@@ -6,6 +6,7 @@
 #ifndef BLOCK_QUEUE_H
 #define BLOCK_QUEUE_H
 
+#include <stdlib.h>
 #include "lock.h"
 
 template <typename T>

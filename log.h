@@ -16,7 +16,7 @@ Error：输出系统的错误信息；
 
 class Log {
 private:
-    Log() {}
+    Log(); 
     virtual ~Log();
 
     // 异步写日志方法

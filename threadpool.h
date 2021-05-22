@@ -24,7 +24,7 @@ private:
 private:
     int m_thread_num; // 线程池中的线程数
     int m_max_requests; // 请求队列中运行的最大请求数量
-    pthreaad_t *m_threads; // 线程池数组，大小为 thread_num
+    pthread_t *m_threads; // 线程池数组，大小为 thread_num
     std::list<T*> m_workqueue; // 请求队列
     Locker m_queuelocker; // 保护请求队列的互斥锁
     Sem m_queuestat; // 是否有任务需要处理
@@ -37,7 +37,8 @@ Threadpool<T>::Threadpool(Connection_pool *conn_pool, int thread_num, int max_re
     m_conn_pool(conn_pool),
     m_thread_num(thread_num), 
     m_max_requests(max_requests), 
-    m_stop(false), m_threads(nullptr) {
+    m_stop(false), 
+    m_threads(nullptr) {
 
     if ( (m_thread_num <= 0) || (m_max_requests <= 0)) {
         throw std::exception();
