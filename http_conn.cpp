@@ -469,7 +469,7 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
         else if (*(p+1) == '2'){ // 登录校验，直接判断
             // 若浏览器输入的用户名和密码在表中可以查找到，返回1，否则返回0
             if (users.find(name) != users.end() && users[name] == password) {
-                strcpy(m_url, "/welocme.html");
+                strcpy(m_url, "/welcome.html");
             }
             else {
                 strcpy(m_url, "/logError.html");
