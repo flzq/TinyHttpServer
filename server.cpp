@@ -74,7 +74,7 @@ void cb_func(client_data *user_data) {
     // 从内核事件表删除事件
     epoll_ctl(epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     // 关闭文件描述符
-    Close(user_data->sockfd);
+    close(user_data->sockfd);
     // 减少连接数
     Http_conn::m_user_count--;
     // printf("close fd: %d\n", user_data->sockfd);
@@ -308,10 +308,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    Close(epollfd);
-    Close(listenfd);
-    Close(pipefd[0]);
-    Close(pipefd[1]);
+    close(epollfd);
+    close(listenfd);
+    close(pipefd[0]);
+    close(pipefd[1]);
     delete [] users;
     delete[] users_timer;
     delete pool;
