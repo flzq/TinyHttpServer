@@ -49,6 +49,7 @@ bool Log::init(const char *filename, int log_buf_size, int split_lines, int max_
 
     // 存储时日志文件名：时间_文件名
     if (p == nullptr) { // 文件名中不含有 /
+        strcpy(log_name, filename); // 当日志系统已经运行后，修复当filename不包含"/"时，在write_log函数中，创建新的日志文件的文件名中只包含日期的错误
         snprintf(log_full_name, 255, "%d_%02d_%02d_%s", my_tm.tm_year+1900, my_tm.tm_mon+1, my_tm.tm_mday, filename);
     }
     else {
