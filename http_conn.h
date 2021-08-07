@@ -142,7 +142,7 @@ private:
     char *m_url; // 请求资源
     char *m_version; // HTTP 版本
     char *m_host;
-    int cgi; // 是否启用 POST
+    int is_post; // 是否启用 POST
 
     // 请求头中的数据
     int m_content_length; // 内容长度字段

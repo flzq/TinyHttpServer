@@ -60,6 +60,7 @@ void setnonblocking(int fd) {
 }
 
 // 内核事件表注册读事件，ET模式，选择开启EPOLLONESHOT
+// 开启EPOLLONESHOT：针对与客户端连接的socket；为了让每个连接只被一个线程处理
 void addfd(int epollfd, int fd, bool one_shot) {
     struct epoll_event tmp_ep;
     char buf[BUFSIZ];
@@ -119,7 +120,7 @@ void Http_conn::init() {
     
     // 请求行数据初始化
     m_method = GET;
-    cgi = 0;
+    is_post = 0;
     m_url = nullptr;
     m_version = nullptr;   
     m_linger = false;
@@ -310,7 +311,7 @@ Http_conn::HTTP_CODE Http_conn::parse_request_line(char *text) {
     }
     else if (strcasecmp(method, "POST") == 0) {
         m_method = POST;
-        cgi = 1;
+        is_post = 1;
     }
     else {
         return BAD_REQUEST;
@@ -348,7 +349,7 @@ Http_conn::HTTP_CODE Http_conn::parse_request_line(char *text) {
     }
     // 当url为 / 时，显示欢迎页面
     if (strlen(m_url) == 1) {
-        strcat(m_url, "judge.html");
+        strcat(m_url, "root.html");
     }
     
     // 请求完毕，主状态机中对请求行处理转移到对请求头处理
@@ -405,7 +406,33 @@ Http_conn::HTTP_CODE Http_conn::parse_content(char *text) {
    return NO_REQUEST;
 }
 
+/*
+    读到完整HTTP请求后，do_request函数对请求的资源进行分析
+    m_url 中保存了请求资源，其形式为 "/[html]"，如："/" "/0"
+        /
+            访问网站根目录
+            服务器返回root.html文件
+        /0
+            POST 请求，访问网站注册页面，
+            服务器返回 register.html
+            填入注册用户名和密码向 /3 请求对用户名和密码进行注册校验
+        /2
+            POST 请求，登录校验
+            登录成功，服务器返回welcome.html，即登录成功页面
+            登录失败，服务器返回logError.html，即登录失败页面
 
+        /3
+            POST 请求，注册校验
+            注册成功，服务器返回log.html，即登录页面
+            注册失败，服务器返回registerError.html，即注册失败页面
+        /5
+            POST 请求，服务器返回image.html文件，然后该页面向服务器请求图片并且显示
+        /6
+            POST 请求，跳转到video.html文件，该页面向服务器请求视频并且播放
+        /7
+            POST 请求，跳转到about.html文件，
+    
+*/
 Http_conn::HTTP_CODE Http_conn::do_request() {
     // 初始化 m_real_file 为网站根目录
     strcpy(m_real_file, web_root);
@@ -413,10 +440,8 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
     // 找到 m_url 中 / 的位置
     const char *p = strrchr(m_url, '/');
 
-    // 处理cgi，实现登录和注册校验
-    if (cgi == 1 && (*(p+1) == '2' || *(p+1) == '3')) {
-        // 根据标志判断是登录检测还是注册检测
-        char flag = m_url[1];
+    // 处理 POST 请求，实现登录和注册校验
+    if (is_post == 1 && (*(p+1) == '2' || *(p+1) == '3')) {
 
         char *m_url_real = (char*)malloc(sizeof(char)*200);
         strcpy(m_url_real, "/");
@@ -438,7 +463,6 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
         }
         password[j] = '\0';
 
-        // 同步线程登录校验
         // 通过m_url定位/所在位置，根据/后的第一个字符判断是登录还是注册校验，2：登录校验，3：注册校验
         if (*(p+1) == '3') { // 注册校验
             // 先检查数据库中是否有重名，没有重名，就增加数据
@@ -498,7 +522,7 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
     }
     else if (*(p + 1) == '5') { // 请求资源为图片，POST请求
         char *m_url_real = (char *)malloc(sizeof(char) * 200);
-        strcpy(m_url_real, "/picture.html");
+        strcpy(m_url_real, "/image.html");
         strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
 
         free(m_url_real);
@@ -512,7 +536,7 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
     }
     else if (*(p + 1) == '7') { // 跳转到关注页面，POST请求
         char *m_url_real = (char *)malloc(sizeof(char) * 200);
-        strcpy(m_url_real, "/fans.html");
+        strcpy(m_url_real, "/about.html");
         strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
 
         free(m_url_real);
