@@ -124,16 +124,18 @@ int main(int argc, char *argv[]) {
    users->init_mysql_result(conn_pool);
 
     int listenfd, clientfd, epollfd, ret;
-    struct epoll_event tmp_ep, events[OPEN_FILES];
+    struct epoll_event tmp_ep;
+    struct epoll_event events[OPEN_FILES]; // 用于存储epoll文件描述符中就绪事件的数组
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     listenfd = Socket(AF_INET, SOCK_STREAM, 0);
+    // 允许端口复用
     int opt = 1;
     setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (void*)&opt, sizeof(opt));
-
+    
     Bind(listenfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
     Listen(listenfd, 128);
 
@@ -170,6 +172,7 @@ int main(int argc, char *argv[]) {
     alarm(TIMESLOT);
 
     while (!stop_server) {
+        // 等待一组文件描述符上的事件，将就绪事件复制到events数组中
         ret = epoll_wait(epollfd, events, OPEN_FILES, -1);
         if (ret < -1) {
             LOG_ERROR("%s", "epoll failure");
@@ -177,7 +180,7 @@ int main(int argc, char *argv[]) {
         }
         // lt(events, ret, epollfd, listenfd);
         // et(events, ret, epollfd, listenfd);
-        for (int i = 0; i < ret; ++i)
+        for (int i = 0; i < ret; ++i) // 遍历就绪事件
         {
             int clientfd = events[i].data.fd;
             if (clientfd == listenfd) {// 处理新的客户链接
