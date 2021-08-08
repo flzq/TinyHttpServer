@@ -44,10 +44,11 @@ public:
     }
 
     /*
+        实现日志创建，写入方式的判断：同步、异步
         filename: 日志文件名
         lgo_buf_size：日志缓冲区大小
         split_lines：最大行数
-        max_queue_size：日志队列长队
+        max_queue_size：日志队列长度
     */
     bool init(const char *filename, int log_buf_size = 8192, int split_lines = 5000000, int max_queue_size = 0);
 
