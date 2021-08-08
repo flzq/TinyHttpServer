@@ -82,7 +82,7 @@ private:
     void init();
     // 完成报文解析
     HTTP_CODE process_read();
-    // 完成报文响应
+    // 完成响应报文：根据HTTP解析的结果，将相应的响应报文写入写缓冲区中
     bool process_write(HTTP_CODE ret);
     // 从状态机，负责读取报文的一行，返回值为读取状态
     LINE_STATUS parse_line();
@@ -157,7 +157,7 @@ private:
     // 向客户端写入数据时的信息
     iovec m_iv[2];
     int m_iv_count;
-    int bytes_to_send;
+    int bytes_to_send; // 向客户端发送响应报文的大小
     int bytes_have_send;
 };
 

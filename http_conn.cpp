@@ -541,7 +541,7 @@ Http_conn::HTTP_CODE Http_conn::do_request() {
 
         free(m_url_real);
     }
-    else // 都不符合，跳转到欢迎界面，GET请求
+    else // 都不符合，跳转到欢迎界面，GET请求，m_url在parse_request_line函数中已经被赋值为 "/root.html"
         strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
 
     // 通过 stat 获取资源信息，成功则将信息更新到 m_file_stat，失败返回 NO_RESOURCE
@@ -690,20 +690,25 @@ bool Http_conn::write() {
 
     int temp = 0;
     while (1) {
+        // 将响应报文发送给客户端
         temp = writev(m_sockfd, m_iv, m_iv_count);
 
+        // 发送数据失败，判断是否是缓冲区满了
         if (temp < 0) {
             if (errno == EAGAIN) { // 写缓冲区满了
+                // 重新注册写事件，重置EPOLLONESHOT事件，等待下一次写事件
+                // 由于注册了写事件，无法立即接受同一用户的下一次请求
                 modfd(m_epollfd, m_sockfd, EPOLLOUT);
-                return true;
+                return true; // 返回true，表示还有数据要发送，主线程延迟定时器
             }
+            // 发送失败，且不是缓冲区问题，则取消映射，并且在主线程中关闭连接
             unmap();
             return false;
         }
 
+        // 发送数据成功，更新参数
         bytes_to_send -= temp;
         bytes_have_send += temp;
-
         if (bytes_have_send >= m_iv[0].iov_len) {
             m_iv[0].iov_len = 0;
             m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
@@ -713,23 +718,28 @@ bool Http_conn::write() {
             m_iv[0].iov_base = m_write_buf + bytes_have_send;
             m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;
         }
-
+        
+        // 发送数据成功，且响应报文整体发送成功，判断是否是长连接
         if (bytes_to_send <= 0) {
-            unmap();
+            unmap(); // 整个响应报文发送成功，关闭文件映射
+            // 重新注册读事件，重置EPOLLONESHOT事件，等待下一次读事件
             modfd(m_epollfd, m_sockfd, EPOLLIN);
             
-            if (m_linger) {
-                init();
-                return true;
+            if (m_linger) { 
+                init(); // 浏览器的请求为长连接，重新初始化HTTP对象，不关闭连接
+                return true; // 返回true，主线程延长定时器
             }
             else {
+                // 短链接，返回false，主线程直接关闭连接
                 return false;
             }
         }
     }
 }
 
-
+/*
+    取消对数据的映射
+*/
 void Http_conn::unmap() {
     if (m_file_address) {
         munmap(m_file_address, m_file_stat.st_size);
