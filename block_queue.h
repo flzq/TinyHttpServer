@@ -129,8 +129,9 @@ public:
         while (m_size <= 0) {
             m_cond.wait(m_mutex.get());
         }
+        // 消费者取出循环队列队首元素
         m_front = (m_front + 1) % m_max_size;
-        m_array[m_front] = item;
+        item = m_array[m_front];
         m_size--;
 
         m_mutex.unlock();
