@@ -19,11 +19,17 @@ Log::~Log() {
     }
 }
 
-// 生成日志文件
 bool Log::init(const char *filename, int log_buf_size, int split_lines, int max_queue_size) {
+    /*
+        初始化日志文件，实现日志创建
+        日志名：事件_filename；（其中时间为启动时间，日志名如：2021_06_01_ServerLog）
+    */
+
     // 如果设置了max_queue_size，则采用异步
     if (max_queue_size >= 1) {  // 异步需要设置阻塞队列的长度，同步不需要设置
+        // 需要异步写日志
         m_is_async = true;
+        // 创建阻塞队列
         m_log_queue = new Block_queue<std::string>(max_queue_size);
 
         // 创建线程，用于日志的异步写
@@ -72,12 +78,29 @@ bool Log::init(const char *filename, int log_buf_size, int split_lines, int max_
 
 void Log::write_log(int level, const char *format, ...)
 {
-    struct timeval now = {0, 0};
-    gettimeofday(&now, NULL);
-    time_t t = now.tv_sec;
-    struct tm *sys_tm = localtime(&t);
-    struct tm my_tm = *sys_tm;
-    char s[16] = {0};
+    /*
+        日志级别：DEBUG, INFO, WARN（未使用）, ERROR
+            DEBUG：调试代码时的输出，在系统实际运行时，一般不使用；
+            Warn：这种警告与调试时终端的warning类似，同样是调试代码时使用；
+            Info：报告系统当前的状态，当前执行的流程或接收的信息等；
+            Error：输出系统的错误信息；
+        
+        日志文件按照最大行数、不同日期分文件：
+            日志写入前判断当前时间是否为创建日志时间，行数是否超过最大行数限制
+                若为创建日志时间，写入日志，否则创建当前时间的新的日志文件
+                若当前文件已经到了最大行数，创建新的日志文件，文件名为在日志文件名末尾加上（m_count/m_split_lines）
+
+        将要写入日志的信息进行格式化
+    */
+
+
+   // 获取当前时间
+   struct timeval now = {0, 0};
+   gettimeofday(&now, NULL);
+   time_t t = now.tv_sec;
+   struct tm *sys_tm = localtime(&t);
+   struct tm my_tm = *sys_tm;
+   char s[16] = {0};
 
     // 日志分级
     switch (level)
@@ -99,15 +122,15 @@ void Log::write_log(int level, const char *format, ...)
         break;
     }
 
-    //写入一个log，对m_count++, m_split_lines最大行数
+
     m_mutex.lock();
     // 日志行数记录
-    m_count++;
+    m_count++; // 更新行数
 
     // 日志不是今天或写入的日志行数是最大行的倍数
     if (m_today != my_tm.tm_mday || m_count % m_split_lines == 0) //everyday log
     {
-        
+        // 新的日志文件
         char new_log[256] = {0};
         fflush(m_fp);
         fclose(m_fp);
@@ -132,18 +155,19 @@ void Log::write_log(int level, const char *format, ...)
  
     m_mutex.unlock();
 
+    // 可变参数初始化
     va_list valst;
     va_start(valst, format);
 
     std::string log_str;
     m_mutex.lock();
 
-    //写入的内容格式：时间+内容
+    //格式化写入日志的内容，写入的内容格式：时间+内容
     // 时间格式化
     int n = snprintf(m_buf, 48, "%d-%02d-%02d %02d:%02d:%02d.%06ld %s ",
                      my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday,
                      my_tm.tm_hour, my_tm.tm_min, my_tm.tm_sec, now.tv_usec, s);
-    // 内容格式化 
+    // 内容格式化
     int m = vsnprintf(m_buf + n, m_log_buf_size - 1, format, valst);
     m_buf[n + m] = '\n';
     m_buf[n + m + 1] = '\0';
@@ -156,7 +180,7 @@ void Log::write_log(int level, const char *format, ...)
     {
         m_log_queue->push(log_str);
     }
-    else
+    else // 同步写日志，直接对日志文件加锁写
     {
         m_mutex.lock();
         fputs(log_str.c_str(), m_fp); // 若同步，则加锁向文件中写

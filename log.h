@@ -1,10 +1,10 @@
 /*
-基于静态局部变量懒汉模式实现日志类，C++11之后可以不用锁
-日志级别：DEBUG, INFO, WARN（未使用）, ERROR
-DEBUG：调试代码时的输出，在系统实际运行时，一般不使用；
-Warn：这种警告与调试时终端的warning类似，同样是调试代码时使用；
-Info：报告系统当前的状态，当前执行的流程或接收的信息等；
-Error：输出系统的错误信息；
+1. 基于单例模式的静态局部变量懒汉模式实现日志类，C++11之后可以不用锁
+2. 日志级别：DEBUG, INFO, WARN（未使用）, ERROR
+    DEBUG：调试代码时的输出，在系统实际运行时，一般不使用；
+    Warn：这种警告与调试时终端的warning类似，同样是调试代码时使用；
+    Info：报告系统当前的状态，当前执行的流程或接收的信息等；
+    Error：输出系统的错误信息；
 */
 
 #ifndef LOG_H
@@ -52,7 +52,7 @@ public:
     */
     bool init(const char *filename, int log_buf_size = 8192, int split_lines = 5000000, int max_queue_size = 0);
 
-    // 将输出内容按照标准格式整理
+    // 将写入日志的内容按照标准格式整理，主要有日志分级、分文件、格式化输出
     void write_log(int level, const char *format, ...);
 
     // 强制刷新缓冲区
