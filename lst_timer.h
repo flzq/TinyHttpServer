@@ -8,6 +8,7 @@
 
 #define BUFFER_SIZE 64
 class util_timer;
+// 连接资源
 struct client_data {
     // 客户端地址
     struct sockaddr_in address;
@@ -18,12 +19,13 @@ struct client_data {
     util_timer *timer;
 };
 
+// 定时器类
 class util_timer {
 public:
     util_timer() : prev(nullptr), next(nullptr) {}
     // 超时时间
     time_t expire;
-    // 回调函数
+    // 回调函数：执行定时事件，这里是关闭非活跃连接
     void (*cb_func) (client_data *);
     // 连接资源
     client_data *user_data;
