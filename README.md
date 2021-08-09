@@ -8,7 +8,7 @@ Linux、C/C++、Socket编程、TCP、MySQL、单例模式、LRU、线程池
 
 ## 项目介绍
 
-1. 该项目为 Linux 下的 C++ 轻量级 Web 服务器；
+1. 该项目为 Linux 下的 C++ 微型 HTTP 服务器；
 
 2. 基于模拟的Proactor事件处理模式
 
