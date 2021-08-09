@@ -18,7 +18,7 @@ Linux、C/C++、Socket编程、TCP、MySQL、单例模式、LRU、线程池
 
 &ensp;&ensp;&ensp;&ensp;2. 基于epoll的ET模式
 
-4. 基于SIGALARM信号通知机制实现
+4. 基于SIGALARM信号通知机制实现非活跃连接管理
 
 5. 统一事件源：将I/O时间和信号事件通过epoll进行监听
 
